@@ -1848,6 +1848,29 @@ static void ParseArgs(int *argc, char **argv) {
       eval_string = argv[++i];
     } else if (strcmp(arg, "--v8-options") == 0) {
       argv[i] = const_cast<char*>("--help");
+    } else if (strstr(arg, "--setuid=") == arg) {
+      const char *p = 0;
+
+      p = strchr(arg, '=') + 1;
+      if (setuid(atoi(p)) < 0) {
+        fprintf(stderr, "Error: --setuid failed\n");
+        exit(1);
+      }
+      argv[i] = const_cast<char*>("");
+    } else if (strstr(arg, "--ports=") == arg) {
+      const char *p = 0;
+      int index = 0;
+
+      p = strchr(arg, '=');
+      do 
+        ++allowed_ports_count;
+      while (p = strchr(p + 1, ','));
+      allowed_ports = new int[allowed_ports_count];
+      p = strchr(arg, '=');
+      do 
+        allowed_ports[index++] = atoi(arg = p + 1);
+      while (p = strchr(arg, ','));
+      argv[i] = const_cast<char*>("");
     } else if (argv[i][0] != '-') {
       break;
     }

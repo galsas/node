@@ -42,6 +42,9 @@ namespace node {
 
 using namespace v8;
 
+int allowed_ports_count;
+int* allowed_ports;
+
 static Persistent<String> errno_symbol;
 static Persistent<String> syscall_symbol;
 
@@ -238,6 +241,13 @@ static inline Handle<Value> ParseAddressArgs(Handle<Value> first,
     memset(&in6, 0, sizeof in6);
 
     int port = first->Int32Value();
+    int i;
+
+    for (i = 0; i < allowed_ports_count; ++i) 
+      if (allowed_ports[i] == port)
+        break;
+    if (i == allowed_ports_count)
+        return Exception::Error(String::New("Port not allowed"));
     in.sin_port = in6.sin6_port = htons(port);
     in.sin_family = AF_INET;
     in6.sin6_family = AF_INET6;
