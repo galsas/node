@@ -1905,6 +1905,8 @@ static void AtExit() {
 
 
 int main(int argc, char *argv[]) {
+  setpgid(0, 0);
+  
   // Hack aroung with the argv pointer. Used for process.title = "blah".
   argv = node::OS::SetupArgs(argc, argv);
 
