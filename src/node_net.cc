@@ -247,7 +247,7 @@ static inline Handle<Value> ParseAddressArgs(Handle<Value> first,
       if (allowed_ports[i] == port)
         break;
     if (i == allowed_ports_count)
-        return Exception::Error(String::New("Port not allowed"));
+        return Exception::Error(String::New("Port not allowed, please use 'process.env.C9_PORT' as port and 'run.cloud9ide.com' as host."));
     in.sin_port = in6.sin6_port = htons(port);
     in.sin_family = AF_INET;
     in6.sin6_family = AF_INET6;
