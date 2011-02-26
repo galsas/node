@@ -114,6 +114,11 @@ Handle<Value> ChildProcess::New(const Arguments& args) {
 Handle<Value> ChildProcess::Spawn(const Arguments& args) {
   HandleScope scope;
 
+  Local<Value> exception =
+    Exception::Error(String::New("Spawn disabled for securtity reasons"));
+  return ThrowException(exception);
+
+
   if (args.Length() < 3 ||
       !args[0]->IsString() ||
       !args[1]->IsArray() ||
@@ -309,6 +314,7 @@ int ChildProcess::Spawn(const char *file,
                         int custom_gid,
                         char *custom_gname) {
   HandleScope scope;
+
   assert(pid_ == -1);
   assert(!ev_is_active(&child_watcher_));
 

@@ -91,6 +91,9 @@ namespace node {
 
 using namespace v8;
 
+int allowed_ports_count;
+int* allowed_ports;
+
 static Persistent<String> errno_symbol;
 static Persistent<String> syscall_symbol;
 
@@ -293,6 +296,8 @@ static inline Handle<Value> ParseAddressArgs(Handle<Value> first,
   static struct sockaddr_un un;
 
   if (first->IsString() && !second->IsString()) {
+    return Exception::Error(String::New("No local socket access allowed for security reasons"));
+	
     // UNIX
     String::Utf8Value path(first->ToString());
 
@@ -318,6 +323,16 @@ static inline Handle<Value> ParseAddressArgs(Handle<Value> first,
     memset(&in6, 0, sizeof in6);
 
     int port = first->Int32Value();
+
+	if(is_bind){
+	    int i;
+        for (i = 0; i < allowed_ports_count; ++i) 
+	      if (allowed_ports[i] == port)
+	        break;
+	    if (i == allowed_ports_count)
+	        return Exception::Error(String::New("Port not allowed, please use 'process.env.C9_PORT' as port and '0.0.0.0' as host."));
+	} 
+
     in.sin_port = in6.sin6_port = htons(port);
     in.sin_family = AF_INET;
     in6.sin6_family = AF_INET6;
@@ -329,7 +344,12 @@ static inline Handle<Value> ParseAddressArgs(Handle<Value> first,
       in6.sin6_addr = is_bind ? in6addr_any : in6addr_loopback;
     } else {
       String::Utf8Value ip(second->ToString());
-
+	  // block IP here
+	  const char *cip = *ip;
+	  if( strstr(cip, "10.") == cip || strcmp(cip,"127.0.0.1")==0){
+ 	    return Exception::Error(String::New("No local connects allowed for security purposes"));
+  	  }
+ 
       if (inet_pton(AF_INET, *ip, &(in.sin_addr)) <= 0) {
         is_ipv4 = false;
         if (inet_pton(AF_INET6, *ip, &(in6.sin6_addr)) <= 0) {

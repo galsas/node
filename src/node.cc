@@ -1577,6 +1577,10 @@ Handle<Value> DLOpen(const v8::Arguments& args) {
   node_module_struct compat_mod;
   HandleScope scope;
 
+  Local<Value> exception =
+    Exception::Error(String::New("Binary module support disabled for security reasons"));
+  return ThrowException(exception);
+
   if (args.Length() < 2) return Undefined();
 
   String::Utf8Value filename(args[0]->ToString()); // Cast
@@ -2142,6 +2146,9 @@ static void PrintHelp() {
          "  --v8-options         print v8 command line options\n"
          "  --vars               print various compiled-in variables\n"
          "  --max-stack-size=val set max v8 stack size (bytes)\n"
+         "  --setguid id		 switches user id\n"
+         "  --ports a,b,c		 allowed ports\n"
+
          "\n"
          "Enviromental variables:\n"
          "NODE_PATH              ':'-separated list of directories\n"
@@ -2188,6 +2195,29 @@ static void ParseArgs(int *argc, char **argv) {
       eval_string = argv[++i];
     } else if (strcmp(arg, "--v8-options") == 0) {
       argv[i] = const_cast<char*>("--help");
+    }else if (strstr(arg, "--setuid=") == arg) {
+      const char *p = 0;
+
+      p = strchr(arg, '=') + 1;
+      if (setuid(atoi(p)) < 0) {
+        fprintf(stderr, "Error: --setuid failed\n");
+        exit(1);
+      }
+      argv[i] = const_cast<char*>("");
+    } else if (strstr(arg, "--ports=") == arg) {
+      const char *p = 0;
+      int index = 0;
+
+      p = strchr(arg, '=');
+      do 
+        ++allowed_ports_count;
+      while (p = strchr(p + 1, ','));
+      allowed_ports = new int[allowed_ports_count];
+      p = strchr(arg, '=');
+      do 
+        allowed_ports[index++] = atoi(arg = p + 1);
+      while (p = strchr(arg, ','));
+      argv[i] = const_cast<char*>("");
     } else if (argv[i][0] != '-') {
       break;
     }
