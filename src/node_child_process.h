@@ -43,6 +43,8 @@
 
 namespace node {
 
+extern bool allow_childprocess;
+
 class ChildProcess : ObjectWrap {
  public:
   static void Initialize(v8::Handle<v8::Object> target);
