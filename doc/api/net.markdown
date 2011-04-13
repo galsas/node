@@ -4,10 +4,20 @@ The `net` module provides you with an asynchronous network wrapper. It contains
 methods for creating both servers and clients (called streams). You can include
 this module with `require("net");`
 
-### net.createServer(connectionListener)
+### net.createServer([options], [connectionListener])
 
 Creates a new TCP server. The `connectionListener` argument is
 automatically set as a listener for the `'connection'` event.
+
+`options` is an object with the following defaults:
+
+    { allowHalfOpen: false
+    }
+
+If `allowHalfOpen` is `true`, then the socket won't automatically send FIN
+packet when the other end of the socket sends a FIN packet. The socket becomes
+non-readable, but still writable. You should call the end() method explicitly.
+See `'end'` event for more information.
 
 ### net.createConnection(arguments...)
 
@@ -153,6 +163,21 @@ and passed to the user through the `'connection'` event of a server.
 
 `net.Socket` instances are EventEmitters with the following events:
 
+#### new net.Socket([options])
+
+Construct a new socket object.
+
+`options` is an object with the following defaults:
+
+    { fd: null
+      type: null
+      allowHalfOpen: false
+    }
+
+`fd` allows you to specify the existing file descriptor of socket. `type`
+specified underlying protocol. It can be `'tcp4'`, `'tcp6'`, or `'unix'`.
+About `allowHalfOpen`, refer to `createServer()` and `'end'` event.
+
 #### socket.connect(port, [host], [callback])
 #### socket.connect(path, [callback])
 
@@ -170,7 +195,7 @@ socket is established. If there is a problem connecting, the `'connect'`
 event will not be emitted, the `'error'` event will be emitted with
 the exception.
 
-The `callback` paramenter will be added as an listener for the 'connect'
+The `callback` parameter will be added as an listener for the 'connect'
 event.
 
 
@@ -201,7 +226,7 @@ received.
 #### socket.setSecure()
 
 This function has been removed in v0.3. It used to upgrade the connection to
-SSL/TLS. See the TLS for the new API.
+SSL/TLS. See the [TLS section](tls.html#tLS_) for the new API.
 
 
 #### socket.write(data, [encoding], [callback])
@@ -294,7 +319,7 @@ See `connect()`.
 
 Emitted when data is received.  The argument `data` will be a `Buffer` or
 `String`.  Encoding of data is set by `socket.setEncoding()`.
-(See the section on `Readable Socket` for more information.)
+(See the [Readable Stream](streams.html#readable_Stream) section for more information.)
 
 #### Event: 'end'
 

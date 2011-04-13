@@ -47,7 +47,7 @@ support this functionality; all others will simply never emit this event.
 ### stream.readable
 
 A boolean that is `true` by default, but turns `false` after an `'error'`
-occured, the stream came to an `'end'`, or `destroy()` was called.
+occurred, the stream came to an `'end'`, or `destroy()` was called.
 
 ### stream.setEncoding(encoding)
 Makes the data event emit a string instead of a `Buffer`. `encoding` can be
@@ -170,3 +170,9 @@ Same as above but with a `buffer`.
 ### stream.destroy()
 
 Closes the underlying file descriptor. Stream will not emit any more events.
+
+### stream.destroySoon()
+
+After the write queue is drained, close the file descriptor. `destroySoon()`
+can still destroy straight away, as long as there is no data left in the queue
+for writes.

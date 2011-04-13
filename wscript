@@ -1,4 +1,26 @@
 #!/usr/bin/env python
+
+# Copyright Joyent, Inc. and other Node contributors.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a
+# copy of this software and associated documentation files (the
+# "Software"), to deal in the Software without restriction, including
+# without limitation the rights to use, copy, modify, merge, publish,
+# distribute, sublicense, and/or sell copies of the Software, and to permit
+# persons to whom the Software is furnished to do so, subject to the
+# following conditions:
+#
+# The above copyright notice and this permission notice shall be included
+# in all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+# OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+# NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+# DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+# OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+# USE OR OTHER DEALINGS IN THE SOFTWARE.
+
 import re
 import Options
 import sys, os, shutil, glob
@@ -39,6 +61,12 @@ def set_options(opt):
   opt.tool_options('compiler_cxx')
   opt.tool_options('compiler_cc')
   opt.tool_options('misc')
+  opt.add_option( '--libdir'
+		, action='store'
+		, type='string'
+		, default=False
+		, help='Install into this libdir [Default: ${PREFIX}/lib]'
+		)
   opt.add_option( '--debug'
                 , action='store_true'
                 , default=False
@@ -208,6 +236,11 @@ def configure(conf):
 
   o = Options.options
 
+  if o.libdir:
+    conf.env['LIBDIR'] = o.libdir
+  else:
+    conf.env['LIBDIR'] = conf.env['PREFIX'] + '/lib'
+
   conf.env["USE_DEBUG"] = o.debug
   # Snapshot building does noet seem to work on cygwin and mingw32
   conf.env["SNAPSHOT_V8"] = not o.without_snapshot and not sys.platform.startswith("win32")
@@ -255,9 +288,11 @@ def configure(conf):
        conf.fatal("Install the libexecinfo port from /usr/ports/devel/libexecinfo.")
 
   if not Options.options.without_ssl:
-    if conf.check_cfg(package='openssl',
-                      args='--cflags --libs',
-                      uselib_store='OPENSSL'):
+    # Don't override explicitly supplied openssl paths with pkg-config results.
+    explicit_openssl = o.openssl_includes or o.openssl_libpath
+    if not explicit_openssl and conf.check_cfg(package='openssl',
+                                               args='--cflags --libs',
+                                               uselib_store='OPENSSL'):
       Options.options.use_openssl = conf.env["USE_OPENSSL"] = True
       conf.env.append_value("CPPFLAGS", "-DHAVE_OPENSSL=1")
     else:
@@ -551,7 +586,9 @@ def v8_cmd(bld, variant):
   if bld.env["USE_GDBJIT"]:
     cmd += ' gdbjit=on '
 
-  if sys.platform.startswith("sunos"): cmd += ' toolchain=gcc'
+  if sys.platform.startswith("sunos"):
+    cmd += ' toolchain=gcc strictaliasing=off'
+
 
 
   return ("echo '%s' && " % cmd) + cmd
@@ -619,6 +656,8 @@ def build(bld):
   http_parser.install_path = None
   if bld.env["USE_DEBUG"]:
     http_parser.clone("debug")
+  if product_type_is_lib:
+    http_parser.ccflags = '-fPIC'
 
   ### src/native.cc
   def make_macros(loc, content):
@@ -706,7 +745,7 @@ def build(bld):
     if bld.env["USE_DEBUG"]:
       dtrace_g = dtrace.clone("debug")
 
-    bld.install_files('${PREFIX}/lib/dtrace', 'src/node.d')
+    bld.install_files('${LIBDIR}/dtrace', 'src/node.d')
 
     if sys.platform.startswith("sunos"):
       #
@@ -723,19 +762,26 @@ def build(bld):
       def dtrace_postprocess(task):
         abspath = bld.srcnode.abspath(bld.env_of_name(task.env.variant()))
         objs = glob.glob(abspath + 'src/*.o')
-
-        Utils.exec_command('%s -G -x nolibs -s %s %s' % (task.env.DTRACE,
-          task.inputs[0].srcpath(task.env), ' '.join(objs)))
+        source = task.inputs[0].srcpath(task.env)
+        target = task.outputs[0].srcpath(task.env)
+        cmd = '%s -G -x nolibs -s %s -o %s %s' % (task.env.DTRACE,
+                                                  source,
+                                                  target,
+                                                  ' '.join(objs))
+        Utils.exec_command(cmd)
 
       dtracepost = bld.new_task_gen(
         name   = "dtrace-postprocess",
         source = "src/node_provider.d",
+        target = "node_provider.o",
         always = True,
         before = "cxx_link",
         after  = "cxx",
+        rule = dtrace_postprocess
       )
 
-      bld.env.append_value('LINKFLAGS', 'node_provider.o')
+      t = join(bld.srcnode.abspath(bld.env_of_name("default")), dtracepost.target)
+      bld.env_of_name('default').append_value('LINKFLAGS', t)
 
       #
       # Note that for the same (mysterious) issue outlined above with respect
@@ -748,10 +794,9 @@ def build(bld):
       if bld.env["USE_DEBUG"]:
         dtracepost_g = dtracepost.clone("debug")
         dtracepost_g.rule = dtrace_postprocess
-        bld.env_of_name("debug").append_value('LINKFLAGS_V8_G',
-          'node_provider.o') 
+        t = join(bld.srcnode.abspath(bld.env_of_name("debug")), dtracepost.target)
+        bld.env_of_name("debug").append_value('LINKFLAGS_V8_G', t)
 
-      dtracepost.rule = dtrace_postprocess
 
   ### node lib
   node = bld.new_task_gen("cxx", product_type)
@@ -760,7 +805,7 @@ def build(bld):
   node.uselib = 'RT EV OPENSSL CARES EXECINFO DL KVM SOCKET NSL UTIL OPROFILE'
   node.add_objects = 'eio http_parser'
   if product_type_is_lib:
-    node.install_path = '${PREFIX}/lib'
+    node.install_path = '${LIBDIR}'
   else:
     node.install_path = '${PREFIX}/bin'
   node.chmod = 0755
@@ -782,6 +827,7 @@ def build(bld):
     src/node_script.cc
     src/node_os.cc
     src/node_dtrace.cc
+    src/node_string.cc
   """
 
   if sys.platform.startswith("win32"):
@@ -817,14 +863,14 @@ def build(bld):
     bld.env.append_value('LINKFLAGS', '-Wl,--export-all-symbols')
     bld.env.append_value('LINKFLAGS', '-Wl,--out-implib,default/libnode.dll.a')
     bld.env.append_value('LINKFLAGS', '-Wl,--output-def,default/libnode.def')
-    bld.install_files('${PREFIX}/lib', "build/default/libnode.*")
+    bld.install_files('${LIBDIR}', "build/default/libnode.*")
 
   def subflags(program):
     x = { 'CCFLAGS'   : " ".join(program.env["CCFLAGS"]).replace('"', '\\"')
         , 'CPPFLAGS'  : " ".join(program.env["CPPFLAGS"]).replace('"', '\\"')
         , 'LIBFLAGS'  : " ".join(program.env["LIBFLAGS"]).replace('"', '\\"')
         , 'PREFIX'    : safe_path(program.env["PREFIX"])
-        , 'VERSION'   : '0.4.1' # FIXME should not be hard-coded, see NODE_VERSION_STRING in src/node_version.
+        , 'VERSION'   : '0.4.5' # FIXME should not be hard-coded, see NODE_VERSION_STRING in src/node_version.
         }
     return x
 
@@ -863,8 +909,8 @@ def build(bld):
     bld.install_files('${PREFIX}/share/man/man1/', 'doc/node.1')
 
   bld.install_files('${PREFIX}/bin/', 'tools/node-waf', chmod=0755)
-  bld.install_files('${PREFIX}/lib/node/wafadmin', 'tools/wafadmin/*.py')
-  bld.install_files('${PREFIX}/lib/node/wafadmin/Tools', 'tools/wafadmin/Tools/*.py')
+  bld.install_files('${LIBDIR}/node/wafadmin', 'tools/wafadmin/*.py')
+  bld.install_files('${LIBDIR}/node/wafadmin/Tools', 'tools/wafadmin/Tools/*.py')
 
   # create a pkg-config(1) file
   node_conf = bld.new_task_gen('subst', before="cxx")
@@ -872,7 +918,7 @@ def build(bld):
   node_conf.target = 'tools/nodejs.pc'
   node_conf.dict = subflags(node)
 
-  bld.install_files('${PREFIX}/lib/pkgconfig', 'tools/nodejs.pc')
+  bld.install_files('${LIBDIR}/pkgconfig', 'tools/nodejs.pc')
 
 def shutdown():
   Options.options.debug

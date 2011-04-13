@@ -1,3 +1,24 @@
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
 #include <node_crypto.h>
 #include <v8.h>
 
@@ -15,6 +36,11 @@
 #else
 # define OPENSSL_CONST
 #endif
+
+#define ASSERT_IS_STRING_OR_BUFFER(val) \
+  if (!val->IsString() && !Buffer::HasInstance(val)) { \
+    return ThrowException(Exception::TypeError(String::New("Not a string or buffer"))); \
+  }
 
 namespace node {
 namespace crypto {
@@ -105,8 +131,7 @@ Handle<Value> SecureContext::Init(const Arguments& args) {
   SSL_CTX_set_session_cache_mode(sc->ctx_, SSL_SESS_CACHE_SERVER);
   // SSL_CTX_set_session_cache_mode(sc->ctx_,SSL_SESS_CACHE_OFF);
 
-  sc->ca_store_ = X509_STORE_new();
-  SSL_CTX_set_cert_store(sc->ctx_, sc->ca_store_);
+  sc->ca_store_ = NULL;
   return True();
 }
 
@@ -285,6 +310,7 @@ Handle<Value> SecureContext::SetCert(const Arguments& args) {
 
 
 Handle<Value> SecureContext::AddCACert(const Arguments& args) {
+  bool newCAStore = false;
   HandleScope scope;
 
   SecureContext *sc = ObjectWrap::Unwrap<SecureContext>(args.Holder());
@@ -293,12 +319,22 @@ Handle<Value> SecureContext::AddCACert(const Arguments& args) {
     return ThrowException(Exception::TypeError(String::New("Bad parameter")));
   }
 
+  if (!sc->ca_store_) {
+    sc->ca_store_ = X509_STORE_new();
+    newCAStore = true;
+  }
+
   X509* x509 = LoadX509(args[0]);
   if (!x509) return False();
 
   X509_STORE_add_cert(sc->ca_store_, x509);
+  SSL_CTX_add_client_CA(sc->ctx_, x509);
 
   X509_free(x509);
+
+  if (newCAStore) {
+    SSL_CTX_set_cert_store(sc->ctx_, sc->ca_store_);
+  }
 
   return True();
 }
@@ -335,32 +371,41 @@ Handle<Value> SecureContext::AddCRL(const Arguments& args) {
 }
 
 
+
 Handle<Value> SecureContext::AddRootCerts(const Arguments& args) {
   HandleScope scope;
 
   SecureContext *sc = ObjectWrap::Unwrap<SecureContext>(args.Holder());
 
-  for (int i = 0; root_certs[i]; i++) {
-    // TODO: reuse bp ?
-    BIO *bp = BIO_new(BIO_s_mem());
+  assert(sc->ca_store_ == NULL);
 
-    if (!BIO_write(bp, root_certs[i], strlen(root_certs[i]))) {
+  if (!root_cert_store) {
+    root_cert_store = X509_STORE_new();
+
+    for (int i = 0; root_certs[i]; i++) {
+      BIO *bp = BIO_new(BIO_s_mem());
+
+      if (!BIO_write(bp, root_certs[i], strlen(root_certs[i]))) {
+        BIO_free(bp);
+        return False();
+      }
+
+      X509 *x509 = PEM_read_bio_X509(bp, NULL, NULL, NULL);
+
+      if (x509 == NULL) {
+        BIO_free(bp);
+        return False();
+      }
+
+      X509_STORE_add_cert(root_cert_store, x509);
+
       BIO_free(bp);
-      return False();
+      X509_free(x509);
     }
-
-    X509 *x509 = PEM_read_bio_X509(bp, NULL, NULL, NULL);
-
-    if (x509 == NULL) {
-      BIO_free(bp);
-      return False();
-    }
-
-    X509_STORE_add_cert(sc->ca_store_, x509);
-
-    BIO_free(bp);
-    X509_free(x509);
   }
+
+  sc->ca_store_ = root_cert_store;
+  SSL_CTX_set_cert_store(sc->ctx_, sc->ca_store_);
 
   return True();
 }
@@ -384,18 +429,11 @@ Handle<Value> SecureContext::SetCiphers(const Arguments& args) {
 
 Handle<Value> SecureContext::Close(const Arguments& args) {
   HandleScope scope;
-
   SecureContext *sc = ObjectWrap::Unwrap<SecureContext>(args.Holder());
-
-  if (sc->ctx_ != NULL) {
-    SSL_CTX_free(sc->ctx_);
-    sc->ctx_ = NULL;
-    sc->ca_store_ = NULL;
-    return True();
-  }
-
+  sc->FreeCTXMem();
   return False();
 }
+
 
 #ifdef SSL_PRINT_DEBUG
 # define DEBUG_PRINT(...) fprintf (stderr, __VA_ARGS__)
@@ -1419,6 +1457,7 @@ class Cipher : public ObjectWrap {
         "Must give cipher-type, key")));
     }
 
+    ASSERT_IS_STRING_OR_BUFFER(args[1]);
     ssize_t key_buf_len = DecodeBytes(args[1], BINARY);
 
     if (key_buf_len < 0) {
@@ -1455,6 +1494,8 @@ class Cipher : public ObjectWrap {
       return ThrowException(Exception::Error(String::New(
         "Must give cipher-type, key, and iv as argument")));
     }
+
+    ASSERT_IS_STRING_OR_BUFFER(args[1]);
     ssize_t key_len = DecodeBytes(args[1], BINARY);
 
     if (key_len < 0) {
@@ -1462,6 +1503,7 @@ class Cipher : public ObjectWrap {
       return ThrowException(exception);
     }
 
+    ASSERT_IS_STRING_OR_BUFFER(args[2]);
     ssize_t iv_len = DecodeBytes(args[2], BINARY);
 
     if (iv_len < 0) {
@@ -1491,11 +1533,12 @@ class Cipher : public ObjectWrap {
     return args.This();
   }
 
-
   static Handle<Value> CipherUpdate(const Arguments& args) {
     Cipher *cipher = ObjectWrap::Unwrap<Cipher>(args.This());
 
     HandleScope scope;
+
+    ASSERT_IS_STRING_OR_BUFFER(args[0]);
 
     enum encoding enc = ParseEncoding(args[1]);
     ssize_t len = DecodeBytes(args[0], enc);
@@ -1780,6 +1823,7 @@ class Decipher : public ObjectWrap {
         "Must give cipher-type, key as argument")));
     }
 
+    ASSERT_IS_STRING_OR_BUFFER(args[1]);
     ssize_t key_len = DecodeBytes(args[1], BINARY);
 
     if (key_len < 0) {
@@ -1817,6 +1861,7 @@ class Decipher : public ObjectWrap {
         "Must give cipher-type, key, and iv as argument")));
     }
 
+    ASSERT_IS_STRING_OR_BUFFER(args[1]);
     ssize_t key_len = DecodeBytes(args[1], BINARY);
 
     if (key_len < 0) {
@@ -1824,6 +1869,7 @@ class Decipher : public ObjectWrap {
       return ThrowException(exception);
     }
 
+    ASSERT_IS_STRING_OR_BUFFER(args[2]);
     ssize_t iv_len = DecodeBytes(args[2], BINARY);
 
     if (iv_len < 0) {
@@ -1857,6 +1903,8 @@ class Decipher : public ObjectWrap {
     HandleScope scope;
 
     Decipher *cipher = ObjectWrap::Unwrap<Decipher>(args.This());
+
+    ASSERT_IS_STRING_OR_BUFFER(args[0]);
 
     ssize_t len = DecodeBytes(args[0], BINARY);
     if (len < 0) {
@@ -2159,6 +2207,7 @@ class Hmac : public ObjectWrap {
         "Must give hashtype string as argument")));
     }
 
+    ASSERT_IS_STRING_OR_BUFFER(args[1]);
     ssize_t len = DecodeBytes(args[1], BINARY);
 
     if (len < 0) {
@@ -2188,6 +2237,7 @@ class Hmac : public ObjectWrap {
 
     HandleScope scope;
 
+    ASSERT_IS_STRING_OR_BUFFER(args[0]);
     enum encoding enc = ParseEncoding(args[1]);
     ssize_t len = DecodeBytes(args[0], enc);
 
@@ -2335,6 +2385,7 @@ class Hash : public ObjectWrap {
 
     Hash *hash = ObjectWrap::Unwrap<Hash>(args.This());
 
+    ASSERT_IS_STRING_OR_BUFFER(args[0]);
     enum encoding enc = ParseEncoding(args[1]);
     ssize_t len = DecodeBytes(args[0], enc);
 
@@ -2526,6 +2577,7 @@ class Sign : public ObjectWrap {
 
     HandleScope scope;
 
+    ASSERT_IS_STRING_OR_BUFFER(args[0]);
     enum encoding enc = ParseEncoding(args[1]);
     ssize_t len = DecodeBytes(args[0], enc);
 
@@ -2572,6 +2624,7 @@ class Sign : public ObjectWrap {
     md_len = 8192; // Maximum key size is 8192 bits
     md_value = new unsigned char[md_len];
 
+    ASSERT_IS_STRING_OR_BUFFER(args[0]);
     ssize_t len = DecodeBytes(args[0], BINARY);
 
     if (len < 0) {
@@ -2739,6 +2792,7 @@ class Verify : public ObjectWrap {
 
     Verify *verify = ObjectWrap::Unwrap<Verify>(args.This());
 
+    ASSERT_IS_STRING_OR_BUFFER(args[0]);
     enum encoding enc = ParseEncoding(args[1]);
     ssize_t len = DecodeBytes(args[0], enc);
 
@@ -2777,6 +2831,7 @@ class Verify : public ObjectWrap {
 
     Verify *verify = ObjectWrap::Unwrap<Verify>(args.This());
 
+    ASSERT_IS_STRING_OR_BUFFER(args[0]);
     ssize_t klen = DecodeBytes(args[0], BINARY);
 
     if (klen < 0) {
@@ -2788,7 +2843,7 @@ class Verify : public ObjectWrap {
     ssize_t kwritten = DecodeWrite(kbuf, klen, args[0], BINARY);
     assert(kwritten == klen);
 
-
+    ASSERT_IS_STRING_OR_BUFFER(args[1]);
     ssize_t hlen = DecodeBytes(args[1], BINARY);
 
     if (hlen < 0) {

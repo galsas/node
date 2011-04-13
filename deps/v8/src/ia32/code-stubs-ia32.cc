@@ -1342,6 +1342,9 @@ void TypeRecordingBinaryOpStub::Generate(MacroAssembler* masm) {
     case TRBinaryOpIC::HEAP_NUMBER:
       GenerateHeapNumberStub(masm);
       break;
+    case TRBinaryOpIC::ODDBALL:
+      GenerateOddballStub(masm);
+      break;
     case TRBinaryOpIC::STRING:
       GenerateStringStub(masm);
       break;
@@ -2006,9 +2009,41 @@ void TypeRecordingBinaryOpStub::GenerateInt32Stub(MacroAssembler* masm) {
 }
 
 
+void TypeRecordingBinaryOpStub::GenerateOddballStub(MacroAssembler* masm) {
+  Label call_runtime;
+
+  if (op_ == Token::ADD) {
+    // Handle string addition here, because it is the only operation
+    // that does not do a ToNumber conversion on the operands.
+    GenerateAddStrings(masm);
+  }
+
+  // Convert odd ball arguments to numbers.
+  NearLabel check, done;
+  __ cmp(edx, Factory::undefined_value());
+  __ j(not_equal, &check);
+  if (Token::IsBitOp(op_)) {
+    __ xor_(edx, Operand(edx));
+  } else {
+    __ mov(edx, Immediate(Factory::nan_value()));
+  }
+  __ jmp(&done);
+  __ bind(&check);
+  __ cmp(eax, Factory::undefined_value());
+  __ j(not_equal, &done);
+  if (Token::IsBitOp(op_)) {
+    __ xor_(eax, Operand(eax));
+  } else {
+    __ mov(eax, Immediate(Factory::nan_value()));
+  }
+  __ bind(&done);
+
+  GenerateHeapNumberStub(masm);
+}
+
+
 void TypeRecordingBinaryOpStub::GenerateHeapNumberStub(MacroAssembler* masm) {
   Label call_runtime;
-  ASSERT(operands_type_ == TRBinaryOpIC::HEAP_NUMBER);
 
   // Floating point case.
   switch (op_) {
@@ -2385,14 +2420,14 @@ void TypeRecordingBinaryOpStub::GenerateGeneric(MacroAssembler* masm) {
 
 
 void TypeRecordingBinaryOpStub::GenerateAddStrings(MacroAssembler* masm) {
-  NearLabel call_runtime;
+  ASSERT(op_ == Token::ADD);
+  NearLabel left_not_string, call_runtime;
 
   // Registers containing left and right operands respectively.
   Register left = edx;
   Register right = eax;
 
   // Test if left operand is a string.
-  NearLabel left_not_string;
   __ test(left, Immediate(kSmiTagMask));
   __ j(zero, &left_not_string);
   __ CmpObjectType(left, FIRST_NONSTRING_TYPE, ecx);
@@ -3399,7 +3434,7 @@ void MathPowStub::Generate(MacroAssembler* masm) {
   __ test(edx, Immediate(kSmiTagMask));
   __ j(not_zero, &base_nonsmi);
 
-  // Optimized version when both exponent and base is a smi.
+  // Optimized version when both exponent and base are smis.
   Label powi;
   __ SmiUntag(edx);
   __ cvtsi2sd(xmm0, Operand(edx));
@@ -3438,7 +3473,6 @@ void MathPowStub::Generate(MacroAssembler* masm) {
   __ j(not_carry, &no_multiply);
   __ mulsd(xmm1, xmm0);
   __ bind(&no_multiply);
-  __ test(eax, Operand(eax));
   __ mulsd(xmm0, xmm0);
   __ j(not_zero, &while_true);
 
@@ -3525,7 +3559,7 @@ void MathPowStub::Generate(MacroAssembler* masm) {
   __ AllocateHeapNumber(ecx, eax, edx, &call_runtime);
   __ movdbl(FieldOperand(ecx, HeapNumber::kValueOffset), xmm1);
   __ mov(eax, ecx);
-  __ ret(2);
+  __ ret(2 * kPointerSize);
 
   __ bind(&call_runtime);
   __ TailCallRuntime(Runtime::kMath_pow_cfunction, 2, 1);
