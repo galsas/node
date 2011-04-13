@@ -51,6 +51,7 @@ using namespace v8;
 static Persistent<String> pid_symbol;
 static Persistent<String> onexit_symbol;
 
+bool allow_childprocess = false;
 
 // TODO share with other modules
 static inline int SetNonBlocking(int fd) {
@@ -114,9 +115,11 @@ Handle<Value> ChildProcess::New(const Arguments& args) {
 Handle<Value> ChildProcess::Spawn(const Arguments& args) {
   HandleScope scope;
 
-  Local<Value> exception =
-    Exception::Error(String::New("Spawn disabled for securtity reasons"));
-  return ThrowException(exception);
+  if (!allow_childprocess) {
+    Local<Value> exception =
+      Exception::Error(String::New("Spawn disabled for securtity reasons"));
+    return ThrowException(exception);
+  }
 
 
   if (args.Length() < 3 ||

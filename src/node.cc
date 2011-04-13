@@ -2146,8 +2146,9 @@ static void PrintHelp() {
          "  --v8-options         print v8 command line options\n"
          "  --vars               print various compiled-in variables\n"
          "  --max-stack-size=val set max v8 stack size (bytes)\n"
-         "  --setguid id		 switches user id\n"
-         "  --ports a,b,c		 allowed ports\n"
+         "  --setguid id         switches user id\n"
+         "  --ports a,b,c        allowed ports\n"
+         "  --allow-childprocess\n"
 
          "\n"
          "Enviromental variables:\n"
@@ -2195,14 +2196,17 @@ static void ParseArgs(int *argc, char **argv) {
       eval_string = argv[++i];
     } else if (strcmp(arg, "--v8-options") == 0) {
       argv[i] = const_cast<char*>("--help");
-    }else if (strstr(arg, "--setuid=") == arg) {
-      const char *p = 0;
+      }else if (strstr(arg, "--setuid=") == arg) {
+        const char *p = 0;
 
-      p = strchr(arg, '=') + 1;
-      if (setuid(atoi(p)) < 0) {
-        fprintf(stderr, "Error: --setuid failed\n");
-        exit(1);
-      }
+        p = strchr(arg, '=') + 1;
+        if (setuid(atoi(p)) < 0) {
+          fprintf(stderr, "Error: --setuid failed\n");
+          exit(1);
+        }
+        argv[i] = const_cast<char*>("");
+    }else if (strcmp(arg, "--allow-childprocess") == 0) {
+      allow_childprocess = true;
       argv[i] = const_cast<char*>("");
     } else if (strstr(arg, "--ports=") == arg) {
       const char *p = 0;
