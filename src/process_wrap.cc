@@ -56,6 +56,7 @@ using v8::Integer;
 using v8::Exception;
 using v8::ThrowException;
 
+bool allow_childprocess = false;
 
 class ProcessWrap : public HandleWrap {
  public:
@@ -95,6 +96,12 @@ class ProcessWrap : public HandleWrap {
 
   static Handle<Value> Spawn(const Arguments& args) {
     HandleScope scope;
+    
+    if (!allow_childprocess) {
+      Local<Value> exception =
+        Exception::Error(String::New("Spawn disabled for securtity reasons"));
+      return ThrowException(exception);
+    }
 
     UNWRAP
 

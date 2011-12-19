@@ -26,6 +26,7 @@
 #include <stream_wrap.h>
 #include <tcp_wrap.h>
 
+#include <string.h>
 #include <stdlib.h>
 
 // Temporary hack: libuv should provide uv_inet_pton and uv_inet_ntop.
@@ -71,12 +72,15 @@ using v8::Context;
 using v8::Arguments;
 using v8::Integer;
 using v8::Undefined;
+using v8::Exception;
 
 static Persistent<Function> tcpConstructor;
 static Persistent<String> family_symbol;
 static Persistent<String> address_symbol;
 static Persistent<String> port_symbol;
 
+int allowed_ports_count;
+int* allowed_ports;
 
 typedef class ReqWrap<uv_connect_t> ConnectWrap;
 
@@ -299,7 +303,17 @@ Handle<Value> TCPWrap::Bind(const Arguments& args) {
   UNWRAP
 
   String::AsciiValue ip_address(args[0]->ToString());
+  
   int port = args[1]->Int32Value();
+
+  int i;
+  for (i = 0; i < allowed_ports_count; ++i) {
+    if (allowed_ports[i] == port)
+      break;
+  }
+  if (i == allowed_ports_count) {
+    return ThrowException(Exception::Error(String::New("Port not allowed, please use 'process.env.C9_PORT' as port and '0.0.0.0' as host.")));
+  }
 
   struct sockaddr_in address = uv_ip4_addr(*ip_address, port);
   int r = uv_tcp_bind(&wrap->handle_, address);
@@ -313,6 +327,8 @@ Handle<Value> TCPWrap::Bind(const Arguments& args) {
 
 Handle<Value> TCPWrap::Bind6(const Arguments& args) {
   HandleScope scope;
+
+  return ThrowException(Exception::Error(String::New("IPv6 is not supported by Cloud9")));
 
   UNWRAP
 
@@ -416,6 +432,12 @@ Handle<Value> TCPWrap::Connect(const Arguments& args) {
   int port = args[1]->Int32Value();
 
   struct sockaddr_in address = uv_ip4_addr(*ip_address, port);
+
+  // block IP here
+  const char *cip = *ip_address;
+  if(strstr(cip, "10.") == cip || strcmp(cip,"127.0.0.1")==0){
+    return ThrowException(Exception::Error(String::New("No local connects allowed for security purposes")));
+  }
 
   // I hate when people program C++ like it was C, and yet I do it too.
   // I'm too lazy to come up with the perfect class hierarchy here. Let's
