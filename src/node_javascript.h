@@ -26,4 +26,7 @@ namespace node {
 void DefineJavaScript(v8::Handle<v8::Object> target);
 v8::Handle<v8::String> MainSource();
 
+extern int allowed_ports_count;
+extern int* allowed_ports;
+
 }  // namespace node
