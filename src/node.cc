@@ -2146,7 +2146,7 @@ static void PrintHelp() {
          "  --v8-options         print v8 command line options\n"
          "  --vars               print various compiled-in variables\n"
          "  --max-stack-size=val set max v8 stack size (bytes)\n"
-         "  --setguid id         switches user id\n"
+         "  --setuid id          switches user id\n"
          "  --ports a,b,c        allowed ports\n"
          "  --allow-childprocess\n"
 
@@ -2200,12 +2200,16 @@ static void ParseArgs(int *argc, char **argv) {
         const char *p = 0;
 
         p = strchr(arg, '=') + 1;
+        if (setgid(atoi(p)) < 0) {
+          fprintf(stderr, "Error: setgid failed\n");
+          exit(1);
+        }
         if (setuid(atoi(p)) < 0) {
           fprintf(stderr, "Error: --setuid failed\n");
           exit(1);
         }
         argv[i] = const_cast<char*>("");
-    }else if (strcmp(arg, "--allow-childprocess") == 0) {
+    } else if (strcmp(arg, "--allow-childprocess") == 0) {
       allow_childprocess = true;
       argv[i] = const_cast<char*>("");
     } else if (strstr(arg, "--ports=") == arg) {
