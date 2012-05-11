@@ -22,6 +22,7 @@
 #include "uv.h"
 #include "internal.h"
 
+#include <stdlib.h>
 #include <assert.h>
 #include <errno.h>
 
@@ -167,7 +168,16 @@ out:
 
 
 int uv_tcp_listen(uv_tcp_t* tcp, int backlog, uv_connection_cb cb) {
+  static int single_accept = -1;
   int r;
+
+  if (single_accept == -1) {
+    const char *val = getenv("UV_TCP_SINGLE_ACCEPT");
+    single_accept = val && !!atoi(val);
+  }
+
+  if (single_accept)
+    tcp->flags |= UV_TCP_SINGLE_ACCEPT;
 
   if (tcp->delayed_error) {
     uv__set_sys_error(tcp->loop, tcp->delayed_error);
@@ -322,5 +332,9 @@ int uv_tcp_keepalive(uv_tcp_t* handle, int enable, unsigned int delay) {
 
 
 int uv_tcp_simultaneous_accepts(uv_tcp_t* handle, int enable) {
+  if (enable)
+    handle->flags |= UV_TCP_SINGLE_ACCEPT;
+  else
+    handle->flags &= ~UV_TCP_SINGLE_ACCEPT;
   return 0;
 }

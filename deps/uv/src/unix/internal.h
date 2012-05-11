@@ -152,6 +152,7 @@ enum {
   UV_WRITABLE      = 0x40,   /* The stream is writable */
   UV_TCP_NODELAY   = 0x080,  /* Disable Nagle. */
   UV_TCP_KEEPALIVE = 0x100,  /* Turn on keep-alive. */
+  UV_TCP_SINGLE_ACCEPT = 0x200, /* Only accept() when idle. */
   UV_TIMER_ACTIVE  = 0x080,
   UV_TIMER_REPEAT  = 0x100
 };

@@ -83,6 +83,12 @@ void uv_close(uv_handle_t* handle, uv_close_cb close_cb) {
       uv_read_stop(stream);
       ev_io_stop(stream->loop->ev, &stream->write_watcher);
 
+      /* The next_watcher has been repurposed for listen sockets, reset it.
+       * See uv__server_io() in src/unix/stream.c for the motivation.
+       */
+      ev_idle_stop(handle->loop->ev, &handle->next_watcher);
+      ev_set_cb(&handle->next_watcher, uv__next);
+
       uv__close(stream->fd);
       stream->fd = -1;
 
@@ -216,7 +222,7 @@ void uv__handle_init(uv_loop_t* loop, uv_handle_t* handle,
   handle->type = type;
   handle->flags = 0;
 
-  ev_init(&handle->next_watcher, uv__next);
+  ev_idle_init(&handle->next_watcher, uv__next);
   handle->next_watcher.data = handle;
 
   /* Ref the loop until this handle is closed. See uv__finish_close. */

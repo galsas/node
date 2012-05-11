@@ -152,52 +152,78 @@ void uv__stream_destroy(uv_stream_t* stream) {
 }
 
 
+static void uv__next_accept(EV_P_ ev_idle *watcher, int revents) {
+  uv_stream_t* stream = container_of(watcher, uv_stream_t, next_watcher);
+
+  ev_idle_stop(EV_A_ &stream->next_watcher);
+
+  if (stream->accepted_fd == -1)
+    ev_io_start(EV_A_ &stream->read_watcher);
+}
+
+
 void uv__server_io(EV_P_ ev_io* watcher, int revents) {
   int fd;
   struct sockaddr_storage addr;
   uv_stream_t* stream = watcher->data;
 
-  assert(watcher == &stream->read_watcher ||
-         watcher == &stream->write_watcher);
+  assert(watcher == &stream->read_watcher || watcher == &stream->write_watcher);
   assert(revents == EV_READ);
-
   assert(!(stream->flags & UV_CLOSING));
+  assert(stream->accepted_fd == -1);
 
-  if (stream->accepted_fd >= 0) {
-    ev_io_stop(EV_A, &stream->read_watcher);
-    return;
-  }
-
-  /* connection_cb can close the server socket while we're
-   * in the loop so check it on each iteration.
-   */
   while (stream->fd != -1) {
-    assert(stream->accepted_fd < 0);
     fd = uv__accept(stream->fd, (struct sockaddr*)&addr, sizeof addr);
 
-    if (fd < 0) {
-      if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        /* No problem. */
+    if (fd == -1) {
+      if (errno == EAGAIN || errno == EWOULDBLOCK)
         return;
-      } else if (errno == EMFILE) {
-        /* TODO special trick. unlock reserved socket, accept, close. */
+      if (errno == EMFILE)
         return;
-      } else if (errno == ECONNABORTED) {
-        /* ignore */
+      if (errno == ECONNABORTED)
         continue;
-      } else {
-        uv__set_sys_error(stream->loop, errno);
-        stream->connection_cb((uv_stream_t*)stream, -1);
-      }
-    } else {
-      stream->accepted_fd = fd;
-      stream->connection_cb((uv_stream_t*)stream, 0);
-      if (stream->accepted_fd >= 0) {
-        /* The user hasn't yet accepted called uv_accept() */
-        ev_io_stop(stream->loop->ev, &stream->read_watcher);
-        return;
-      }
+
+      uv__set_sys_error(stream->loop, errno);
+      stream->connection_cb(stream, -1);
     }
+    else {
+      stream->accepted_fd = fd;
+      stream->connection_cb(stream, 0);
+    }
+
+    if (stream->accepted_fd != -1 || stream->flags & UV_TCP_SINGLE_ACCEPT) {
+      ev_io_stop(EV_A_ &stream->read_watcher);
+      break;
+    }
+  }
+
+  if (stream->flags & UV_TCP_SINGLE_ACCEPT &&
+      stream->accepted_fd == -1 &&
+      stream->fd != -1)
+  {
+    /* We piggyback on the next_watcher. This is a hack to guarantee fair
+     * connection load balancing in multi-process setups. The problem is
+     * as follows:
+     *
+     *  1. Multiple processes listen on the same socket.
+     *  2. The OS scheduler commonly gives preference to one process to
+     *     avoid task switches.
+     *  3. That process therefore accepts most of the new connections,
+     *     leading to a (sometimes very) unevenly distributed load.
+     *
+     * Here is how we mitigate this issue:
+     *
+     *  1. Accept a connection.
+     *  2. Start an idle watcher.
+     *  3. Don't accept new connections until the idle callback fires.
+     *
+     * This works because the callback only fires when there have been
+     * no recent events, i.e. none of the watched file descriptors have
+     * recently been readable or writable.
+     */
+    assert(!ev_is_active(&stream->next_watcher));
+    ev_set_cb(&stream->next_watcher, uv__next_accept);
+    ev_idle_start(EV_A_ &stream->next_watcher);
   }
 }
 
