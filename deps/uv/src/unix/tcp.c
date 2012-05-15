@@ -168,16 +168,9 @@ out:
 
 
 int uv_tcp_listen(uv_tcp_t* tcp, int backlog, uv_connection_cb cb) {
-  static int single_accept = -1;
   int r;
 
-  if (single_accept == -1) {
-    const char *val = getenv("UV_TCP_SINGLE_ACCEPT");
-    single_accept = val && !!atoi(val);
-  }
-
-  if (single_accept)
-    tcp->flags |= UV_TCP_SINGLE_ACCEPT;
+  tcp->flags |= UV_TCP_SINGLE_ACCEPT;
 
   if (tcp->delayed_error) {
     uv__set_sys_error(tcp->loop, tcp->delayed_error);
