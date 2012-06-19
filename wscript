@@ -571,7 +571,7 @@ def v8_cmd(bld, variant):
   else:
     snapshot = ""
 
-  cmd_R = sys.executable + ' "%s" -j %d -C "%s" -Y "%s" visibility=default mode=%s %s toolchain=%s library=static %s'
+  cmd_R = sys.executable + ' "%s" -j %d -C "%s" -Y "%s" visibility=default mode=%s %s toolchain=%s openshift_dir=%s openshift_obj=%s library=static %s'
 
   cmd = cmd_R % ( scons
                 , Options.options.jobs
@@ -580,6 +580,8 @@ def v8_cmd(bld, variant):
                 , mode
                 , arch
                 , toolchain
+                , safe_path(join(deps_src, 'openshift'))
+                , safe_path(join(bld.srcnode.abspath(bld.env_of_name(variant)), 'deps', 'openshift', 'openshift_1.o'))
                 , snapshot
                 )
 
@@ -590,17 +592,18 @@ def v8_cmd(bld, variant):
     cmd += ' toolchain=gcc strictaliasing=off'
 
 
-
   return ("echo '%s' && " % cmd) + cmd
 
 
 def build_v8(bld):
   v8 = bld.new_task_gen(
+    name          = 'v8',
     source        = 'deps/v8/SConstruct '
                     + bld.path.ant_glob('v8/include/*')
                     + bld.path.ant_glob('v8/src/*'),
     target        = bld.env["staticlib_PATTERN"] % "v8",
     rule          = v8_cmd(bld, "Release"),
+    add_objects   = "openshift",
     before        = "cxx",
     install_path  = None)
 
@@ -702,10 +705,27 @@ def build(bld):
   print "Parallel Jobs: " + str(Options.options.jobs)
   print "Product type: " + product_type
 
+  ### openshift
+  openshift = bld.new_task_gen(
+    "cc",
+    always = True,
+    source = "deps/openshift/openshift.c",
+    includes = "deps/openshift/",
+    name = "openshift",
+    target = "openshift",
+    install_path = None,
+    before = "v8"
+  )
+  if bld.env["USE_DEBUG"]:
+    openshift.clone("Debug")
+  if product_type_is_lib:
+    openshift.ccflags = '-fPIC'
+
+  ### libuv
   build_uv(bld)
 
+  ### v8
   if not bld.env['USE_SHARED_V8']: build_v8(bld)
-
 
   ### http_parser
   http_parser = bld.new_task_gen("cc")
@@ -842,13 +862,13 @@ def build(bld):
         Utils.exec_command(cmd)
 
       dtrace_ustack = bld.new_task_gen(
-	name = "dtrace_ustack-postprocess",
-	source = "src/v8ustack.d",
-	target = "v8ustack.o",
-	always = True,
-	before = "cxx_link",
-	after = "cxx",
-	rule = dtrace_do_ustack
+        name = "dtrace_ustack-postprocess",
+        source = "src/v8ustack.d",
+        target = "v8ustack.o",
+        always = True,
+        before = "cxx_link",
+        after = "cxx",
+        rule = dtrace_do_ustack
       )
 
       dtracepost = bld.new_task_gen(
@@ -887,7 +907,7 @@ def build(bld):
   node.name         = "node"
   node.target       = "node"
   node.uselib = 'RT OPENSSL ZLIB CARES EXECINFO DL KVM SOCKET NSL KSTAT UTIL OPROFILE'
-  node.add_objects = 'http_parser'
+  node.add_objects = 'http_parser openshift'
   if product_type_is_lib:
     node.install_path = '${LIBDIR}'
   else:
@@ -936,6 +956,7 @@ def build(bld):
   node.includes = """
     src/
     deps/http_parser
+    deps/openshift
     deps/uv/include
     deps/uv/src/ev
     deps/uv/src/ares

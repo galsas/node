@@ -44,6 +44,8 @@
 #include <netinet/in.h>
 #include <netdb.h>
 
+#include "openshift.h"
+
 #undef MAP_TYPE
 
 #if defined(ANDROID)
